@@ -4,6 +4,10 @@ import { prisma } from '@/lib/db/client';
 import { decryptToken } from '@/lib/meta/oauth';
 import { normalizeZernioEvent, verifyZernioSignature } from '@/lib/zernio/normalize-event';
 import { processInstagramWebhook } from '@/lib/queue/process-webhook';
+import { drainAfterResponse } from '@/lib/queue/drain-after-response';
+
+// Covers the queue drain that runs after the response (90s budget + 60s to close the worker).
+export const maxDuration = 160;
 
 const eventEnvelopeSchema = z.object({ account: z.object({ id: z.string().min(1), platform: z.literal('instagram') }) });
 
@@ -26,6 +30,7 @@ export async function POST(request: Request, segmentData: { params: Promise<{ wo
   if (!normalized) return NextResponse.json({ success: true, ignored: true });
   try {
     await processInstagramWebhook({ payload: normalized, provider: 'ZERNIO', workspaceId });
+    drainAfterResponse();
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: 'Webhook processing failed; retry delivery.' }, { status: 500 });

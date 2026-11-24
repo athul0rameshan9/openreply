@@ -2,7 +2,11 @@ import { getRedisConnection } from "@/lib/queue/client";
 
 const WORKER_HEALTH_KEY = "health:worker:dm";
 const WORKER_ALERTS_KEY = "alerts:worker:dm";
-const WORKER_HEARTBEAT_TTL_SECONDS = 120;
+// The always-on worker beats every 30s. On Vercel the heartbeat comes from the
+// per-minute /api/cron/worker run, so a late cron tick can need more slack.
+const WORKER_HEARTBEAT_TTL_SECONDS = Number(
+  process.env.WORKER_HEARTBEAT_TTL_SECONDS ?? 120
+);
 
 export interface WorkerHeartbeat {
   status: "running";

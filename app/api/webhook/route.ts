@@ -5,7 +5,11 @@ import {
   verifyWebhookSignature,
 } from "@/lib/meta/webhook";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
+import { drainAfterResponse } from "@/lib/queue/drain-after-response";
 
+// Covers the queue drain that runs after the response (90s budget + 60s to
+// close the worker).
+export const maxDuration = 160;
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -63,6 +67,7 @@ export async function POST(request: NextRequest) {
 
   try {
     await processInstagramWebhook({ payload: payload as Parameters<typeof parseCommentEvents>[0], provider: 'META' });
+    drainAfterResponse();
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ success: false, error: 'Webhook processing failed' }, { status: 500 });

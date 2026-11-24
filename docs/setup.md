@@ -20,7 +20,9 @@ Learn about the optional sponsor at [Zernio](https://zernio.com/?utm_source=open
 OpenReply is two processes and two datastores.
 
 - Web app and API: Next.js. Serves the dashboard, the OAuth callback, and the incoming webhook. Runs well on Vercel.
-- Worker: a long-running Node process (`npm run worker`) that consumes the send queue and runs the polling reconciler. It cannot run on Vercel, because serverless functions are short-lived and a queue consumer has to stay up. Railway, Render, Fly, or any always-on box works.
+- Worker: consumes the send queue and runs the polling reconciler. Run it one of two ways:
+  - Always-on process: `npm run worker` on Railway, Render, Fly, or any always-on box.
+  - On Vercel Pro, with no separate host: each webhook sends what it enqueued right after responding, and the per-minute `/api/cron/worker` cron sends delayed jobs (retries, follow-ups, paced comments) and runs the reconciler. See [Running the worker on Vercel](#running-the-worker-on-vercel).
 - PostgreSQL: campaigns, logs, accounts, sessions.
 - Redis: the BullMQ send queue and the per-account rate limiter.
 
@@ -87,7 +89,18 @@ DATABASE_URL="postgresql://...proxy.rlwy.net.../railway" npm run db:migrate
 3. Deploy. The build runs `prisma generate` before `next build`, so the Prisma client is generated even though it is gitignored.
 4. The daily token-refresh cron is wired up in `vercel.json`.
 
-Note on crons: Vercel's free plan allows each cron to run at most once per day. The repo's crons are set to daily for that reason. The comment polling reconciler does not use a Vercel cron; it runs inside the Railway worker on its own interval, so the free plan is not a constraint there.
+Note on crons: Vercel's free (Hobby) plan allows each cron to run at most once per day, and a deploy whose `vercel.json` asks for more fails. `vercel.json` includes the per-minute `/api/cron/worker` entry for running the worker on Vercel Pro. On Hobby, delete that entry and run `npm run worker` on an always-on host instead; the other crons are daily and work on any plan.
+
+### Running the worker on Vercel
+
+On Vercel Pro the worker can run inside Vercel, with no Railway worker:
+
+- Each webhook (`/api/webhook` and the Zernio webhook) sends Meta its 200, then keeps the function running (Next.js `after()`) to process the queue for up to 90 seconds. DMs go out within seconds, as with the always-on worker.
+- `/api/cron/worker` runs every minute. It sends jobs that have come due since (retry backoffs, follow-ups, comments held by `COMMENT_DM_MAX_PER_HOUR`, follow re-checks) and runs the missed-comment sweep every `COMMENT_POLL_INTERVAL_MS`.
+- A Redis lock keeps it to one consumer at a time, so a burst of webhooks does not open a worker and its Redis connections per request. Each run stops as soon as nothing is due within the next minute, so an idle queue costs a few milliseconds per tick.
+- A run is stopped before its function times out, after letting jobs in flight finish. If a function is killed mid-job anyway, the next run picks the job back up, and the delivery claim keeps an uncertain send from being repeated.
+
+The worker uses the same code and the same environment variables as `npm run worker`. Running both is safe (BullMQ gives each job to one consumer), so you can keep an always-on worker during the switch and retire it once `/api/health` and the DM logs look right. The inline drain in the webhooks is on by default on Vercel only; set `INLINE_WORKER=false` to turn it off there, or `true` to turn it on elsewhere.
 
 Optional custom domain: if you want `openreply.yoursite.com` instead of the Vercel URL, add it in Vercel under Domains and make it primary. Then update `NEXTAUTH_URL` and the two Meta URLs (Step 7 and Step 8 below) to the new domain, and update the worker's `NEXTAUTH_URL` too, or tracked links in DMs will point at the old domain.
 
@@ -129,6 +142,13 @@ Optional, for tuning the polling reconciler (defaults are fine to start):
 | `COMMENT_POLL_INTERVAL_MS` | `300000` | How often the worker sweeps for missed comments (5 min). |
 | `COMMENT_POLL_MAX_PER_SWEEP` | `30` | Max new comments each campaign acts on per sweep. Keep it conservative; higher gets closer to Instagram's rate limits. |
 | `COMMENT_POLL_LOOKBACK_HOURS` | `72` | How far back a sweep considers comments. |
+
+Optional, for the worker on Vercel:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `INLINE_WORKER` | on when `VERCEL=1` | `true`/`false`: whether webhook routes process the queue after responding. |
+| `WORKER_HEARTBEAT_TTL_SECONDS` | `120` | How old the worker heartbeat may be before `/api/health` reports it down. On Vercel the per-minute cron writes it; raise to `180` if late cron ticks make health flap. |
 
 Optional, for busy posts:
 

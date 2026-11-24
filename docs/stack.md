@@ -25,10 +25,13 @@ For the step-by-step setup, see [setup.md](setup.md).
 
 - **Web app + API** (`npm run dev` / `npm start`): Next.js. Serves the dashboard,
   the OAuth callback, and the incoming webhook. Serverless-friendly; runs on Vercel.
-- **Worker** (`npm run worker`): a long-running Node process. Consumes the send
-  queue, sends the DMs, runs the polling reconciler, and performs the follow-gate
-  `is_user_follow_business` checks. **Must stay always-on**, so it cannot run on
-  Vercel — it needs an always-on host.
+- **Worker**: consumes the send queue, sends the DMs, runs the polling
+  reconciler, and performs the follow-gate `is_user_follow_business` checks.
+  Either a long-running Node process (`npm run worker`) on an always-on host, or,
+  on Vercel Pro, run inside Vercel functions: the webhook routes process the
+  queue after responding and the per-minute `/api/cron/worker` cron handles
+  delayed jobs and the reconciler (`lib/queue/drain.ts`). See
+  [setup.md](setup.md#running-the-worker-on-vercel).
 - **PostgreSQL**: campaigns, DM logs, accounts, sessions, tracked links, click events.
 - **Redis**: the BullMQ send queue and the per-account rate limiter. Must speak the
   native Redis protocol over TCP (an HTTP-only Redis will not work with BullMQ).
